@@ -14,13 +14,33 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Install Dependencies
+    - name: Cache OpenSSL
+      id: cache-openssl
+      uses: actions/cache@v4
+      with:
+        path: /home/runner/openssl-3.5
+        key: ${{ runner.os }}-openssl-3.5.0
+
+    - name: Compile OpenSSL 3.5+
+      if: steps.cache-openssl.outputs.cache-hit != 'true'
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential libssl-dev libgtest-dev libbenchmark-dev
+        sudo apt-get install -y build-essential perl
+        wget https://github.com -O openssl-master.zip
+        unzip openssl-master.zip
+        cd openssl-master
+        ./config --prefix=/home/runner/openssl-3.5 --openssldir=/home/runner/openssl-3.5/ssl no-shared
+        make -j$(nproc)
+        make install_sw
+
+    - name: Install Google Test and Benchmark
+      run: |
+        sudo apt-get install -y libgtest-dev libbenchmark-dev
 
     - name: Run Cryptographic Tests
-      run: make test
+      run: |
+        make test CXXFLAGS="-std=c++20 -O3 -Wall -Wextra -Wpedantic -I/home/runner/openssl-3.5/include" LIBS_CRYPTO="-L/home/runner/openssl-3.5/lib64 -lcrypto"
 
     - name: Verify Benchmarks Compilation
-      run: make build/ml_kem_bench
+      run: |
+        make build/ml_kem_bench CXXFLAGS="-std=c++20 -O3 -Wall -Wextra -Wpedantic -I/home/runner/openssl-3.5/include" LIBS_CRYPTO="-L/home/runner/openssl-3.5/lib64 -lcrypto"
