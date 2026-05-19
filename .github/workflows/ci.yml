@@ -1,0 +1,26 @@
+name: kernelMesh Crypto CI
+
+on:
+  push:
+    branches: [ "main", "master", "oxxximif/crypto"]
+  pull_request:
+    branches: [ "main", "master", "oxxximif/crypto"]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential libssl-dev libgtest-dev libbenchmark-dev
+
+    - name: Run Cryptographic Tests
+      run: make test
+
+    - name: Verify Benchmarks Compilation
+      run: make build/ml_kem_bench

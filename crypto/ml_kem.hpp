@@ -20,7 +20,6 @@
 // * Exceptions: Functions do not throw exceptions (noexcept), returning error
 // codes.
 // * Thread safety: Constant operations are thread-safe.
-// * Memory: No heap allocations at runtime (zero-allocation).
 //
 // Parameter specification (ML-KEM-768 by default):
 // * Public Key size: 1184 bytes.
