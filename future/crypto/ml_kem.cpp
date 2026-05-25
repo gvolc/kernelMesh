@@ -9,7 +9,10 @@
 
 #include <openssl/core_names.h>
 #include <openssl/evp.h>
-#include <openssl/crypto.h> // Для OPENSSL_cleanse
+#include <openssl/crypto.h> 
+
+#include <optional>
+#include <memory>
 
 namespace kernelmesh {
 namespace crypto {
@@ -23,17 +26,24 @@ struct MlKemParams {
   size_t ciphertext_size;
 };
 
-[[nodiscard]] constexpr MlKemParams GetVariantParams(MlKemVariant variant) noexcept {
+[[nodiscard]] constexpr std::optional<MlKemParams> GetVariantParams(MlKemVariant variant) noexcept {
   switch (variant) {
     case MlKemVariant::kMlKem512:
-      return { "ML-KEM-512", MlKem512PublicKeySize, MlKem512SecretKeySize, MlKem512CiphertextSize };
-    case MlKemVariant::kMlKem1024:
-      return { "ML-KEM-1024", MlKem1024PublicKeySize, MlKem1024SecretKeySize, MlKem1024CiphertextSize };
+      return MlKemParams{ "ML-KEM-512", MlKem512PublicKeySize, MlKem512SecretKeySize, MlKem512CiphertextSize };
     case MlKemVariant::kMlKem768:
-    default:
-      return { "ML-KEM-768", MlKem768PublicKeySize, MlKem768SecretKeySize, MlKem768CiphertextSize };
+      return MlKemParams{ "ML-KEM-768", MlKem768PublicKeySize, MlKem768SecretKeySize, MlKem768CiphertextSize };
+    case MlKemVariant::kMlKem1024:
+      return MlKemParams{ "ML-KEM-1024", MlKem1024PublicKeySize, MlKem1024SecretKeySize, MlKem1024CiphertextSize };
   }
+  return std::nullopt;
 }
+
+// RAII обертки для безопасного управления ресурсами OpenSSL в продакшене
+struct EvpPkeyCtxDeleter { void operator()(EVP_PKEY_CTX* ptr) const { EVP_PKEY_CTX_free(ptr); } };
+struct EvpPkeyDeleter    { void operator()(EVP_PKEY* ptr) const { EVP_PKEY_free(ptr); } };
+
+using SafeEvpCtx  = std::unique_ptr<EVP_PKEY_CTX, EvpPkeyCtxDeleter>;
+using SafeEvpPkey = std::unique_ptr<EVP_PKEY, EvpPkeyDeleter>;
 
 }  // namespace
 
@@ -48,29 +58,34 @@ CryptoStatus GenerateKeyPairEx(MlKemVariant variant,
     return CryptoStatus::kBufferNotAligned;
   }
 
-  const MlKemParams params = GetVariantParams(variant);
+  const auto params_opt = GetVariantParams(variant);
+  if (!params_opt.has_value()) {
+    return CryptoStatus::kInvalidArgument;
+  }
+  const MlKemParams params = *params_opt;
+
   if (public_key.size() != params.public_key_size ||
       secret_key.size() != params.secret_key_size) {
     return CryptoStatus::kInvalidBufferSize;
   }
 
-  EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_from_name(nullptr, params.name, nullptr);
-  if (ctx == nullptr) {
+  SafeEvpCtx ctx(EVP_PKEY_CTX_new_from_name(nullptr, params.name, nullptr));
+  if (!ctx) {
     return CryptoStatus::kContextCreationFailed;
   }
 
-  if (EVP_PKEY_keygen_init(ctx) <= 0) {
-    EVP_PKEY_CTX_free(ctx);
+  if (EVP_PKEY_keygen_init(ctx.get()) <= 0) {
     return CryptoStatus::kKeyGenerationFailed;
   }
 
-  EVP_PKEY* pkey = nullptr;
-  if (EVP_PKEY_keygen(ctx, &pkey) <= 0 || pkey == nullptr) {
-    EVP_PKEY_CTX_free(ctx);
+  EVP_PKEY* raw_pkey = nullptr;
+  if (EVP_PKEY_keygen(ctx.get(), &raw_pkey) <= 0 || raw_pkey == nullptr) {
+    if (raw_pkey) EVP_PKEY_free(raw_pkey);
     return CryptoStatus::kKeyGenerationFailed;
   }
+  SafeEvpPkey pkey(raw_pkey);
 
-  EVP_PKEY_CTX_free(ctx);
+  ctx.reset(); // Освобождаем контекст генерации перед экспортом параметров
 
   size_t pub_len = public_key.size();
   size_t priv_len = secret_key.size();
@@ -78,17 +93,16 @@ CryptoStatus GenerateKeyPairEx(MlKemVariant variant,
   unsigned char* raw_pub_ptr = reinterpret_cast<unsigned char*>(public_key.data());
   unsigned char* raw_priv_ptr = reinterpret_cast<unsigned char*>(secret_key.data());
 
-  int res_pub = EVP_PKEY_get_octet_string_param(pkey, OSSL_PKEY_PARAM_PUB_KEY,
+  int res_pub = EVP_PKEY_get_octet_string_param(pkey.get(), OSSL_PKEY_PARAM_PUB_KEY,
                                                 raw_pub_ptr, pub_len, &pub_len);
 
-  int res_priv = EVP_PKEY_get_octet_string_param(pkey, OSSL_PKEY_PARAM_PRIV_KEY,
+  int res_priv = EVP_PKEY_get_octet_string_param(pkey.get(), OSSL_PKEY_PARAM_PRIV_KEY,
                                                  raw_priv_ptr, priv_len, &priv_len);
 
-  EVP_PKEY_free(pkey);
+  pkey.reset(); // Безопасно уничтожаем ключ
 
   if (res_pub <= 0 || pub_len != params.public_key_size ||
       res_priv <= 0 || priv_len != params.secret_key_size) {
-    // ЗАЩИТА: Стираем данные из буферов при падении экспорта
     OPENSSL_cleanse(secret_key.data(), secret_key.size());
     OPENSSL_cleanse(public_key.data(), public_key.size());
     return CryptoStatus::kExportFailed;
@@ -111,19 +125,23 @@ CryptoStatus EncapsulateEx(
     return CryptoStatus::kBufferNotAligned;
   }
 
-  const MlKemParams params = GetVariantParams(variant);
+  const auto params_opt = GetVariantParams(variant);
+  if (!params_opt.has_value()) {
+    return CryptoStatus::kInvalidArgument;
+  }
+  const MlKemParams params = *params_opt;
+
   if (public_key.size() != params.public_key_size || 
       ciphertext.size() != params.ciphertext_size || 
       shared_secret.size() != MlKemSharedSecretSize) {
     return CryptoStatus::kInvalidBufferSize;
   }
 
-  EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_from_name(nullptr, params.name, nullptr);
-  if (ctx == nullptr) {
+  SafeEvpCtx ctx(EVP_PKEY_CTX_new_from_name(nullptr, params.name, nullptr));
+  if (!ctx) {
     return CryptoStatus::kContextCreationFailed;
   }
 
-  // Безопасное приведение без прямого const_cast над ссылкой на память
   void* raw_pub_ptr = const_cast<void*>(static_cast<const void*>(public_key.data()));
 
   OSSL_PARAM os_params[2];
@@ -133,24 +151,25 @@ CryptoStatus EncapsulateEx(
       public_key.size());
   os_params[1] = OSSL_PARAM_construct_end();
 
-  EVP_PKEY* pub_pkey = nullptr;
-  if (EVP_PKEY_fromdata_init(ctx) <= 0 ||
-      EVP_PKEY_fromdata(ctx, &pub_pkey, EVP_PKEY_PUBLIC_KEY, os_params) <= 0 ||
-      pub_pkey == nullptr) {
-    EVP_PKEY_CTX_free(ctx);
+  EVP_PKEY* raw_pub_pkey = nullptr;
+  if (EVP_PKEY_fromdata_init(ctx.get()) <= 0 ||
+      EVP_PKEY_fromdata(ctx.get(), &raw_pub_pkey, EVP_PKEY_PUBLIC_KEY, os_params) <= 0) {
+    if (raw_pub_pkey) EVP_PKEY_free(raw_pub_pkey);
+    return CryptoStatus::kContextCreationFailed;
+  }
+  if (raw_pub_pkey == nullptr) {
+    return CryptoStatus::kContextCreationFailed;
+  }
+  SafeEvpPkey pub_pkey(raw_pub_pkey);
+  ctx.reset(); 
+
+  ctx.reset(EVP_PKEY_CTX_new_from_pkey(nullptr, pub_pkey.get(), nullptr));
+  pub_pkey.reset(); 
+  if (!ctx) {
     return CryptoStatus::kContextCreationFailed;
   }
 
-  EVP_PKEY_CTX_free(ctx);
-
-  ctx = EVP_PKEY_CTX_new_from_pkey(nullptr, pub_pkey, nullptr);
-  EVP_PKEY_free(pub_pkey);
-  if (ctx == nullptr) {
-    return CryptoStatus::kContextCreationFailed;
-  }
-
-  if (EVP_PKEY_encapsulate_init(ctx, nullptr) <= 0) {
-    EVP_PKEY_CTX_free(ctx);
+  if (EVP_PKEY_encapsulate_init(ctx.get(), nullptr) <= 0) {
     return CryptoStatus::kContextCreationFailed;
   }
 
@@ -158,14 +177,13 @@ CryptoStatus EncapsulateEx(
   size_t ss_len = shared_secret.size();
   
   int res = EVP_PKEY_encapsulate(
-      ctx, 
+      ctx.get(), 
       reinterpret_cast<unsigned char*>(ciphertext.data()), &ct_len,
       reinterpret_cast<unsigned char*>(shared_secret.data()), &ss_len);
 
-  EVP_PKEY_CTX_free(ctx);
+  ctx.reset();
 
   if (res <= 0 || ct_len != params.ciphertext_size || ss_len != MlKemSharedSecretSize) {
-    // ЗАЩИТА: Зачищаем выходы, чтобы не оставлять мусор или частичные секреты
     OPENSSL_cleanse(ciphertext.data(), ciphertext.size());
     OPENSSL_cleanse(shared_secret.data(), shared_secret.size());
     return CryptoStatus::kExportFailed;
@@ -188,15 +206,20 @@ CryptoStatus DecapsulateEx(
     return CryptoStatus::kBufferNotAligned;
   }
 
-  const MlKemParams params = GetVariantParams(variant);
+  const auto params_opt = GetVariantParams(variant);
+  if (!params_opt.has_value()) {
+    return CryptoStatus::kInvalidArgument;
+  }
+  const MlKemParams params = *params_opt;
+
   if (secret_key.size() != params.secret_key_size || 
       ciphertext.size() != params.ciphertext_size || 
       shared_secret.size() != MlKemSharedSecretSize) {
     return CryptoStatus::kInvalidBufferSize;
   }
 
-  EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_from_name(nullptr, params.name, nullptr);
-  if (ctx == nullptr) {
+  SafeEvpCtx ctx(EVP_PKEY_CTX_new_from_name(nullptr, params.name, nullptr));
+  if (!ctx) {
     return CryptoStatus::kContextCreationFailed;
   }
 
@@ -209,39 +232,38 @@ CryptoStatus DecapsulateEx(
       secret_key.size());
   os_params[1] = OSSL_PARAM_construct_end();
 
-  EVP_PKEY* priv_pkey = nullptr;
-  if (EVP_PKEY_fromdata_init(ctx) <= 0 ||
-      EVP_PKEY_fromdata(ctx, &priv_pkey, EVP_PKEY_KEYPAIR, os_params) <= 0 ||
-      priv_pkey == nullptr) {
-    EVP_PKEY_CTX_free(ctx);
+  EVP_PKEY* raw_priv_pkey = nullptr;
+  if (EVP_PKEY_fromdata_init(ctx.get()) <= 0 ||
+      EVP_PKEY_fromdata(ctx.get(), &raw_priv_pkey, EVP_PKEY_KEYPAIR, os_params) <= 0) {
+    if (raw_priv_pkey) EVP_PKEY_free(raw_priv_pkey);
+    return CryptoStatus::kContextCreationFailed;
+  }
+  if (raw_priv_pkey == nullptr) {
+    return CryptoStatus::kContextCreationFailed;
+  }
+  SafeEvpPkey priv_pkey(raw_priv_pkey);
+  ctx.reset();
+
+  ctx.reset(EVP_PKEY_CTX_new_from_pkey(nullptr, priv_pkey.get(), nullptr));
+  priv_pkey.reset();
+  if (!ctx) {
     return CryptoStatus::kContextCreationFailed;
   }
 
-  EVP_PKEY_CTX_free(ctx);
-
-  ctx = EVP_PKEY_CTX_new_from_pkey(nullptr, priv_pkey, nullptr);
-  EVP_PKEY_free(priv_pkey);
-  if (ctx == nullptr) {
-    return CryptoStatus::kContextCreationFailed;
-  }
-
-  // ИСПРАВЛЕНО: возвращаем семантически корректный статус ошибки вместо kKeyGenerationFailed
-  if (EVP_PKEY_decapsulate_init(ctx, nullptr) <= 0) {
-    EVP_PKEY_CTX_free(ctx);
+  if (EVP_PKEY_decapsulate_init(ctx.get(), nullptr) <= 0) {
     return CryptoStatus::kDecapsulationFailed;
   }
 
   size_t ss_len = shared_secret.size();
   
   int res = EVP_PKEY_decapsulate(
-      ctx, 
+      ctx.get(), 
       reinterpret_cast<unsigned char*>(shared_secret.data()), &ss_len,
       reinterpret_cast<const unsigned char*>(ciphertext.data()), ciphertext.size());
 
-  EVP_PKEY_CTX_free(ctx);
+  ctx.reset();
 
   if (res <= 0 || ss_len != MlKemSharedSecretSize) {
-    // ЗАЩИТА: Зачищаем буфер общего секрета при сбое
     OPENSSL_cleanse(shared_secret.data(), shared_secret.size());
     return CryptoStatus::kExportFailed;
   }

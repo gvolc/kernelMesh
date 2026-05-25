@@ -68,7 +68,7 @@ enum class CryptoStatus : uint32_t {
     case CryptoStatus::kSuccess:
       return "Success";
     case CryptoStatus::kInvalidArgument:
-      return "Invalid argument: nullptr pointer detected";
+      return "Invalid argument: nullptr pointer or invalid variant detected";
     case CryptoStatus::kBufferNotAligned:
       return "Cryptographic buffer misaligned (Must be 64-byte boundary)";
     case CryptoStatus::kInvalidBufferSize:

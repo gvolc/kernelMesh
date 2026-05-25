@@ -8,7 +8,8 @@
 // @file ml_kem_test.cpp
 // @brief Unit tests for hardened ML-KEM key generation.
 
-#include "../crypto/ml_kem.hpp"
+// #include "../crypto/ml_kem.hpp"
+#include "../future/crypto/ml_kem.hpp"
 
 #include <gtest/gtest.h>
 
@@ -83,6 +84,23 @@ TEST(MlKemTest, RejectsInvalidBufferSizes) {
       GenerateKeyPairEx(MlKemVariant::kMlKem768, small_pub, correct_sec);
   EXPECT_EQ(status, CryptoStatus::kInvalidBufferSize);
 }
+
+TEST(MlKemTest, FullKemCycle768Success) {
+  alignas(MlCryptoAlignment) std::array<std::byte, MlKem768PublicKeySize> pub;
+  alignas(MlCryptoAlignment) std::array<std::byte, MlKem768SecretKeySize> sec;
+  
+  ASSERT_EQ(GenerateKeyPair(pub, sec), CryptoStatus::kSuccess);
+
+  alignas(MlCryptoAlignment) std::array<std::byte, MlKem768CiphertextSize> ciphertext;
+  alignas(MlCryptoAlignment) std::array<std::byte, MlKemSharedSecretSize> alice_secret;
+  alignas(MlCryptoAlignment) std::array<std::byte, MlKemSharedSecretSize> bob_secret;
+
+  EXPECT_EQ(Encapsulate(pub, ciphertext, alice_secret), CryptoStatus::kSuccess);
+  EXPECT_EQ(Decapsulate(sec, ciphertext, bob_secret), CryptoStatus::kSuccess);
+
+  EXPECT_EQ(alice_secret, bob_secret);
+}
+
 
 }  // namespace
 }  // namespace crypto

@@ -16,9 +16,9 @@ LIB_OBJ        := $(BUILD_DIR)/ml_kem.o
 TEST_BINARY    := $(BUILD_DIR)/ml_kem_test
 BENCH_BINARY   := $(BUILD_DIR)/ml_kem_bench
 
-HPP  := $(shell find . -name "*.hpp" -o -name "*.cpp")
+FORMAT_SOURCES := $(shell find . -path "./$(BUILD_DIR)" -prune -o \( -name "*.hpp" -o -name "*.cpp" \) -print)
 
-.PHONY: all test bench clean format format-hpp/cpp
+.PHONY: all test bench clean format-hpp/cpp
 
 all: $(TEST_BINARY) $(BENCH_BINARY)
 
@@ -44,8 +44,10 @@ clean:
 	rm -rf $(BUILD_DIR)
 
 format-hpp/cpp:
-	@if [ -z "$(HPP)" ]; then \
-		echo "[!] Files not found"; \
+	@if [ -z "$(FORMAT_SOURCES)" ]; then \
+		echo "[!] Files for formatting not found"; \
 	else \
-		clang-format -i $(HPP); \
+		echo "[*] Formatting C++ source files..."; \
+		clang-format -i $(FORMAT_SOURCES); \
+		echo "[+] Formatting complete."; \
 	fi
