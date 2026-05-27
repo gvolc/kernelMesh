@@ -8,17 +8,30 @@ package astar
 import (
 	"math"
 	"sync/atomic"
+	//"golang.org/x/sys/cpu"
 )
 
 const maxLoss = 1.0
 
 // const maxPathCost = 1e9
 
+//type TelemetrySnapshot struct {
+//	Loss   float64
+//	Rtt    float64
+//	Load   float64
+//	Energy float64
+//}
+
 type GMetrics struct {
-	loss   atomic.Uint64
-	rtt    atomic.Uint64
-	load   atomic.Uint64
+	loss atomic.Uint64
+	//_      cpu.CacheLinePad
+	rtt atomic.Uint64
+	//_      cpu.CacheLinePad
+	load atomic.Uint64
+	//_      cpu.CacheLinePad
 	energy atomic.Uint64
+
+	//data atomic.Pointer[TelemetrySnapshot]
 }
 
 type Weight struct {
@@ -81,3 +94,5 @@ func (gm *GMetrics) GetRtt() float64 { return loadFloat(&gm.rtt) }
 func (gm *GMetrics) GetLoad() float64 { return loadFloat(&gm.load) }
 
 func (gm *GMetrics) GetEnergy() float64 { return loadFloat(&gm.energy) }
+
+//func (gm *GMetrics) GetSnapshot() *TelemetrySnapshot { return gm.data.Load() }
