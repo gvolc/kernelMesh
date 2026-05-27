@@ -1,0 +1,37 @@
+{
+  "active_profile": "balanced",
+  "profiles": {
+    "balanced": {
+      "name": "1",
+      "description": "1",
+      "weight_loss": 1.0,
+      "weight_ping": 1.0,
+      "weight_load": 0.5,
+      "weight_power": 0.2
+    },
+    "energy_saving": {
+      "name": "2",
+      "description": "2",
+      "weight_loss": 0.5,
+      "weight_ping": 0.2,
+      "weight_load": 0.5,
+      "weight_power": 3.0
+    },
+    "high_performance": {
+      "name": "3",
+      "description": "3",
+      "weight_loss": 0.5,
+      "weight_ping": 3.0,
+      "weight_load": 1.0,
+      "weight_power": 0.0
+    },
+    "high_reliability": {
+      "name": "4",
+      "description": "4",
+      "weight_loss": 4.0,
+      "weight_ping": 0.2,
+      "weight_load": 0.5,
+      "weight_power": 0.1
+    }
+  }
+}
