@@ -1,0 +1,26 @@
+// Copyright Gleb Obitotsky <glebobitotsky@yandex.com> 2026.
+//
+// The code is distributed under the Mozilla Public License Version 2.0 license
+// (you can find the license file in the root folder).
+
+syntax = "proto3";
+
+package packet;
+
+option go_package = "./packet";
+
+enum PacketType {
+  UNKNOWN = 0;
+  PING_REQUEST = 1;
+  PING_RESPONSE = 2;
+}
+
+message MeshPing {
+  PacketType type = 1;
+  uint32 seq = 2;
+  bytes client_id = 3;
+  
+  uint32 battery = 4;
+  float cpu_usage = 5;
+  uint32 received_by_target = 6;
+}
