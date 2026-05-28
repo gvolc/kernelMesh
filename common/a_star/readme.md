@@ -30,3 +30,6 @@ $$F = G + H$$
 **Formula Parameters:**
 * $\text{NeighborID}$ — The 256-bit cryptographic identifier (SHA-256) of the neighboring node. * $\text{TargetID}$ — a 256-bit identifier of the target node (recipient).
 * $\text{CommonPrefixLen}$ — a function that returns the length of the common prefix of two IDs in bits (maximum 256).
+
+
+***!*** Some formulas are in comments in the code
