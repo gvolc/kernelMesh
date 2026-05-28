@@ -32,4 +32,4 @@ $$F = G + H$$
 * $\text{CommonPrefixLen}$ — a function that returns the length of the common prefix of two IDs in bits (maximum 256).
 
 
-***!*** Some formulas are in comments in the code
+### **! Some formulas are in comments in the code**
