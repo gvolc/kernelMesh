@@ -52,13 +52,45 @@ func (rtt *Rtt) UpdateRttOld(val float64) {
 	}
 	for {
 		current := rtt.data.Load()
-		new := &Metrics{
-			RttOld:         val,
-			RttNew:         current.RttNew,
-			RttSmoothed:    current.RttSmoothed,
-			RttCoefficient: current.RttCoefficient,
+		next := *current
+		next.RttOld = val
+
+		if rtt.data.CompareAndSwap(current, &next) {
+			return
 		}
-		if rtt.data.CompareAndSwap(current, new) {
+	}
+}
+
+func (rtt *Rtt) Update(rttNew float64) {
+	if !isValidRtt(rttNew) {
+		return
+	}
+
+	for {
+		current := rtt.data.Load()
+
+		rttOld := current.RttSmoothed
+		if rttOld == 0.0 {
+			rttOld = current.RttOld
+		}
+
+		rttSmoothed := ((1.0 - coefficientA) * rttOld) + (coefficientA * rttNew)
+		rttCoefficient := rttSmoothed / maxPing
+
+		if rttCoefficient > 1.0 {
+			rttCoefficient = 1.0
+		} else if rttCoefficient < 0.0 {
+			rttCoefficient = 0.0
+		}
+
+		next := &Metrics{
+			RttOld:         rttOld,
+			RttNew:         rttNew,
+			RttSmoothed:    rttSmoothed,
+			RttCoefficient: rttCoefficient,
+		}
+
+		if rtt.data.CompareAndSwap(current, next) {
 			return
 		}
 	}
